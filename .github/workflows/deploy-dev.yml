@@ -88,7 +88,7 @@ jobs:
         with:
           task-definition: task-definition.json
           container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.build_push.outputs.image_uri }}
+          image: ${{ env.ECR_REPOSITORY }}:dev-${{ needs.build_push.outputs.image_tag }}
 
       - name: Deploy to ECS Service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
