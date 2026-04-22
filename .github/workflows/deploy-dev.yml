@@ -1,0 +1,104 @@
+name: Build, Push & Deploy to ECS
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: 555447961929.dkr.ecr.us-east-1.amazonaws.com/template-react-app-2
+  ECS_CLUSTER: template-react-app-2-cluster
+  ECS_SERVICE: template-react-app-2-service
+  TD_FAMILY: template-react-app-2-td
+  CONTAINER_NAME: template-react-app-2-container
+
+jobs:
+# ---------------------------------------------------------
+# STAGE 1: BUILD & PUSH
+# ---------------------------------------------------------
+  build_push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_uri: ${{ steps.meta.outputs.image_uri }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate Image Tag
+        id: meta
+        run: |
+          SHORT_SHA=${GITHUB_SHA::7}
+          IMAGE_TAG="dev-${SHORT_SHA}"
+          IMAGE_URI="${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}"
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
+          echo "Generated Tag: ${IMAGE_TAG}"
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::555447961929:role/github-actions-ecs-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker Image
+        run: |
+          docker build -t ${{ steps.meta.outputs.image_uri }} .
+
+      - name: Push Image to ECR
+        run: |
+          docker push ${{ steps.meta.outputs.image_uri }}
+
+# ---------------------------------------------------------
+# STAGE 2: DEPLOY
+# ---------------------------------------------------------
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: build_push
+
+    steps:
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::555447961929:role/github-actions-ecs-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download current Task Definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.TD_FAMILY }} \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update image in Task Definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build_push.outputs.image_uri }}
+
+      - name: Deploy to ECS Service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Deployment Summary
+        run: |
+          echo "✅ Deployment Successful"
+          echo "Image: ${{ needs.build_push.outputs.image_uri }}"
