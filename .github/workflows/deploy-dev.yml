@@ -82,6 +82,12 @@ jobs:
             --query taskDefinition \
             > task-definition.json
 
+      - name: Clean Task Definition
+        run: |
+          jq 'del(.enableFaultInjection, .taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+          task-definition.json > clean-task-definition.json
+          mv clean-task-definition.json task-definition.json
+
       - name: Update image in Task Definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -91,7 +97,7 @@ jobs:
           image: ${{ env.ECR_REPOSITORY }}:dev-${{ needs.build_push.outputs.image_tag }}
 
       - name: Deploy to ECS Service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
